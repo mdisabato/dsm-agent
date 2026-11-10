@@ -220,12 +220,29 @@ def restore_ports(agent, outage_secs, critical):
         msg = f"Cycled: {', '.join(done) or 'none'}"
         if failed:
             msg += f"; FAILED: {', '.join(failed)}"
-        status("error" if failed else "success", "complete", msg)
+        status("error" if failed else "success", "complete", _fit(msg))
 
 
 # ---------------------------------------------------------------------------
 # Control-plane commands
 # ---------------------------------------------------------------------------
+
+HA_STATE_MAX = 255   # HA drops a sensor state longer than this (shows "unknown")
+
+
+def _fit(msg):
+    """Keep a status message inside HA's sensor state limit."""
+    return msg if len(msg) <= HA_STATE_MAX else msg[:HA_STATE_MAX - 1] + "…"
+
+
+def _short_why(item):
+    why = item["why"]
+    if why.startswith("outage"):
+        return "not reached"
+    if why.startswith("link unknown"):
+        return "SNMP failed"
+    return f"link {item['link']}"
+
 
 def make_commands(config):
     pcfg = _power_cfg(config)
@@ -243,20 +260,28 @@ def make_commands(config):
 
     def handle_poe_status(payload, publish_fn):
         _status(publish_fn, payload, "running", "started", "Reading PoE ports")
-        parts = []
+        groups, unknown = {}, False
         for p in pcfg["ports"]:
-            parts.append(f"{p.get('name')} {p['switch']}{p['port']}: "
-                         f"poe {poe_state(pcfg, p['switch'], p['port'])}, "
-                         f"link {link_state(pcfg, p['switch'], p['port'])}")
-        _status(publish_fn, payload, "success", "complete", "; ".join(parts) or "no ports configured")
+            poe = poe_state(pcfg, p["switch"], p["port"])
+            link = link_state(pcfg, p["switch"], p["port"])
+            logger.info(f"poe_status {p.get('name')} {p['switch']}{p['port']}: poe {poe}, link {link}")
+            unknown = unknown or "unknown" in (poe, link)
+            groups.setdefault(f"poe {poe}, link {link}", []).append(p.get("name"))
+        msg = "; ".join(f"{k}: {', '.join(v)}" for k, v in groups.items()) or "no ports configured"
+        _status(publish_fn, payload, "error" if unknown else "success", "complete", _fit(msg))
 
     def handle_poe_restore_plan(payload, publish_fn):
         outage = float(payload.get("outage_seconds", 1500))
         critical = bool(payload.get("critical", False))
         _status(publish_fn, payload, "running", "started", f"Dry run for a {int(outage)}s outage")
         plan = plan_restore(pcfg, outage, critical)
-        msg = "; ".join(f"{i['name']}: {i['action']} ({i['why']})" for i in plan)
-        _status(publish_fn, payload, "success", "complete", f"DRY RUN — {msg}")
+        for i in plan:
+            logger.info(f"poe_restore_plan {i['name']}: {i['action']} ({i['why']}; link {i['link']})")
+        cyc = [i["name"] for i in plan if i["action"] == "cycle"]
+        skip = [f"{i['name']} ({_short_why(i)})" for i in plan if i["action"] != "cycle"]
+        msg = (f"DRY RUN {int(outage) // 60} min{' LB' if critical else ''}: "
+               f"cycle {', '.join(cyc) or 'none'}; skip {', '.join(skip) or 'none'}")
+        _status(publish_fn, payload, "success", "complete", _fit(msg))
 
     def handle_poe_cycle(payload, publish_fn):
         if not allow_cycle:
