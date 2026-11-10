@@ -1,0 +1,198 @@
+
+cd /volume1/IoTdata/dsm-agent
+
+systemctl list-unit-files --type=service --state=enabled
+
+# run these individually - they should be installed as part of the raspos distro
+sudo apt-get install python3-dev
+sudo apt-get install python3-apt
+sudo apt install python3.14-venv -y
+
+
+sudo apt install python3-paho-mqtt python3-yaml
+sudo apt-get install python3-psutil python3-docker
+sudo apt-get install python3-tz
+
+----
+python3.14 -m pip install pyyaml paho-mqtt psutil docker pytz aiohttp py-synologydsm-api
+
+sudo cp -r /volume1/pihome/configs/dsm-agent /volume1/IoTdata/dsm-agent
+
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-units/dsm-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable dsm-agent dsm-docker
+sudo systemctl start dsm-agent dsm-docker
+sudo systemctl status dsm-agent dsm-docker
+
+# now update your settings
+cd /volume1/IoTdata/dsm-agent
+
+sudo /usr/local/bin/python3.14 /volume1/IoTdata/dsm-agent/dsm-agent.py
+
+sudo /usr/local/bin/python3.14 /volume1/IoTdata/dsm-agent/chk_raspbian.py
+sudo cp /volume1/pihome/configs/dsm-agent/chk_raspbian.py /volume1/IoTdata/dsm-agent/chk_raspbian.py
+
+sudo cp /volume1/pihome/configs/dsm-agent/config.yaml /volume1/IoTdata/dsm-agent/config.yaml
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-agent.py /volume1/IoTdata/dsm-agent/dsm-agent.py
+sudo cp /volume1/pihome/configs/dsm-agent/collectors/dsm_sensors.py /volume1/IoTdata/dsm-agent/collectors/dsm_sensors.py
+sudo cp /volume1/pihome/configs/dsm-agent/collectors/script_metrics.py /volume1/IoTdata/dsm-agent/collectors/script_metrics.py
+sudo cp /volume1/pihome/configs/dsm-agent/collectors/dsm_disk_metrics.py /volume1/IoTdata/dsm-agent/collectors/dsm_disk_metrics.py
+sudo cp /volume1/pihome/configs/dsm-agent/collectors/dsm_service_metrics.py /volume1/IoTdata/dsm-agent/collectors/dsm_service_metrics.py
+
+sudo /usr/bin/python3 /volume1/IoTdata/dsm-agent/agent_updates.py
+
+sudo cp /volume1/pihome/configs/dsm-agent/config.yaml /volume1/IoTdata/dsm-agent/config.yaml
+
+sudo /usr/local/bin/python3.14 /volume1/IoTdata/dsm-agent/dsm-updates.py
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-updates.py /volume1/IoTdata/dsm-agent/dsm-updates.py
+
+sudo /usr/bin/python3 /volume1/IoTdata/dsm-agent/dsm_docker.py
+sudo /usr/local/bin/python3.14 /volume1/IoTdata/dsm-agent/dsm-docker.py
+
+sudo cp /volume1/pihome/configs/dsm-agent/config.yaml /volume1/IoTdata/dsm-agent/config.yaml
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-docker.py /volume1/IoTdata/dsm-agent/dsm-docker.py
+
+
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-agent.py /volume1/IoTdata/dsm-agent/dsm-agent.py
+sudo cp /home/configs/pixie-agent/controllers/rpi_commands.py /opt/pixie-agent/controllers/rpi_commands.py
+
+
+M
+sudo cp /volume1/pihome/configs/dsm-agent/dsm-units/dsm-*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable dsm-agent dsm-docker
+sudo systemctl start dsm-agent dsm-docker
+
+=======
+
+Generate MQTT Keys
+
+# Generate CA key and cert
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -days 3650 -key ca.key -out ca.crt
+
+# Generate broker key and cert signed by your CA
+openssl genrsa -out broker.key 2048
+openssl req -new -key broker.key -out broker.csr
+openssl x509 -req -in broker.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out broker.crt -days 3650
+openssl x509 -req -in broker.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out broker.crt -days 3650
+
+sudo cp /volume1/pihome/configs/dsm-agent/*.crt /volume1/IoTdata/dsm-agent/
+
+
+--
+# Regenerate CSR with correct CN
+openssl req -new -key broker.key -out broker.csr -subj "/CN=10.1.10.183"
+
+# Sign it with the SAN extension
+openssl x509 -req -in broker.csr -CA ca.crt -CAkey ca.key \
+  -CAcreateserial -out broker.crt -days 3650 \
+  -extfile <(echo "subjectAltName=IP:10.1.10.183")
+
+
+-subj "/CN=your-broker-hostname" \
+-extfile <(echo "subjectAltName=DNS:your-broker-hostname")
+
+
+
+
+
+====
+
+cp settings_example.yaml settings.yaml
+sudo nano /volume1/pihome/runewalker/system_sensors/src settings.yaml
+
+
+sudo cp /volume1/pihome/configs/dsm-agent/collectors/update_metrics.py /volume1/IoTdata/dsm-agent/collectors/update_metrics.py
+
+
+
+
+sudo systemctl edit --force --full system.sensors
+
+[Unit]
+Description=Python based System Sensor Service for MQTT
+Documentation=https://github.com/Sennevds/system_sensors
+After=network.target mosquitto.service network-online.target
+Wants=network-online.target
+Requires=network.target
+
+[Service]
+User=runewalker
+Type=idle
+ExecStart=/volume1/pihome/runewalker/system_sensors/system_sensors_venv/bin/python3 /volume1/pihome/runewalker/system_sensors/src/system_sensors.py /volume1/pihome/runewalker/system_sensors/src/settings.yaml
+StandardOutput=null
+StandardError=journal
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+
+
+
+
+
+cd /volume1/pihome/runewalker/system_sensors
+sudo systemctl stop system.sensors.service
+
+sudo cp /volume1/pihome/configs/settings.yaml /volume1/pihome/runewalker/system_sensors/src/settings.yaml
+sudo cp /volume1/pihome/configs/system_sensors.py /volume1/pihome/runewalker/system_sensors/src/system_sensors.py
+sudo cp /volume1/pihome/configs/sensors.py /volume1/pihome/runewalker/system_sensors/src/sensors.py
+
+/volume1/pihome/runewalker/system_sensors/system_sensors_venv/bin/python3 /volume1/pihome/runewalker/system_sensors/src/system_sensors.py /volume1/pihome/runewalker/system_sensors/src/settings.yaml
+
+sudo nano /volume1/pihome/runewalker/system_sensors/src/settings.yaml
+
+sudo systemctl stop system.sensors.service
+sudo cp /volume1/pihome/configs/sensors.py /volume1/pihome/runewalker/system_sensors/src/sensors.py
+sudo systemctl daemon-reload
+sudo systemctl enable --now system.sensors.service
+sudo systemctl status system.sensors.service
+
+sudo systemctl stop system.sensors.service
+sudo cp /volume1/pihome/configs/system_sensors.py /volume1/pihome/runewalker/system_sensors/src/system_sensors.py
+sudo systemctl daemon-reload
+sudo systemctl enable --now system.sensors.service
+sudo systemctl start system.sensors.service
+
+sudo systemctl status system.sensors.service
+
+
+source system_sensors_venv/bin/activate
+Deactivate
+
+
+/volume1/pihome/runewalker/system_sensors_venv/bin/pip install -r ~/system_sensors/requirements.txt
+
+### 
+
+ssh -F /config/.ssh/config -i /config/.ssh/ha-prod runewalker@pixie.local "df | grep .181 | sed -n 's/.*://p' | cut -d' ' -f1"
+
+
+df | grep .181 | sed -n 's/.*://p' | cut -d' ' -f1
+
+# gives JSON output using (apt-get install jc) jc. Needs sed translate of IP to name
+df -a -T -h -t nfs4 | jc --df
+
+df -a -T -h -t nfs4 | jc --df | sed 's/.*:\//homestone.local\//'
+
+df -a -T -h -t nfs4 | sed 's/.*:\//homestone.local\//' | jc --df 
+
+df -a -T -h -t nfs4 | sed 's/10.1.10.181/homestone.local/' | jc --df
+
+# ===>
+# this one
+df -a -T -h -t nfs4 | jc --df | sed 's/10.1.10.181/homestone.local/g'
+
+
+runewalker@pixie:~ $ df | grep .181 | sed -n 's/.*://p' | cut -d' ' -f1
+/volume1/pihome/configs
+/volume1/pibackup/pixie
+/volume1/pihome/sys_mgmt
+/volume1/pihome/pixie
+/volume1/nvr/viseron/recordings
+/volume1/music/Music/Media.localized/Music
+
+

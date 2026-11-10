@@ -1,0 +1,16 @@
+# secrets and local state
+config.yaml
+*.key
+*.csr
+*.srl
+*.crt
+ups_state.json
+# backups and build junk
+*.pre-*
+*.orig
+*.zip
+pylib/
+venv/
+__pycache__/
+.DS_Store
+@eaDir/

@@ -1,0 +1,84 @@
+# Copy to config.yaml and fill in every "<set-me>". config.yaml is git-ignored.
+device:
+  name: homestone
+#
+mqtt:
+  broker: 10.1.10.181
+  port: 8883
+  tls:
+    ca_cert: /volume1/IoTdata/dsm-agent/ca.crt
+  username: "<set-me>"
+  password: "<set-me>"
+  topic_prefix: system-updates
+#
+homeassistant:
+  discovery_prefix: homeassistant
+#  
+dsm:
+  dsm_ip: 10.1.10.181
+  dsm_port: 8081
+  dsm_username: "<set-me>"
+  dsm_password: "<set-me>"
+#
+collectors:
+  disk:
+    interval_seconds: 300
+  script:
+    interval_seconds: 30
+  docker:
+    interval_seconds: 15
+  updates:
+    interval_minutes: 1440
+#
+mounts:
+#
+services:
+  - dsm-agent
+  - dsm-updates
+  - dsm-docker 
+#
+commands:
+  allow_reboot: true
+  allow_shutdown: true
+  allow_check: true
+  allow_update: true
+  allow_poe_cycle: false
+#
+ups:
+  enabled: false
+  name: ups1
+  nut_host: 127.0.0.1
+  nut_port: 3493
+  nut_ups: ups
+  poll_seconds: 5
+  event_topic: ups/ups1/event
+  state_file: /volume1/IoTdata/dsm-agent/ups_state.json
+  restore_after_seconds: 120        # mains must hold this long
+  restore_min_outage_seconds: 1140  # shorter outages shed nothing
+  shed_all_on_critical: true        # LB or FSD -> send every shed command at once
+  shed:
+    - after_seconds: 1200           # Pis halt on their own upssched timers at the same mark
+      topic: ups/ha_test/shutdown
+    - after_seconds: 2100
+      topic: ups/ha_prod/shutdown
+#
+power:
+  snmp:
+    username: "<set-me>"
+    auth_key: "<set-me>"
+    auth_protocol: SHA
+    timeout: 2
+    retries: 1
+  switches:
+    a: 10.1.10.3
+    b: 10.1.10.4
+  off_seconds: 10
+  link_grace_seconds: 120
+  assume_halted_after_grace: true
+  ports:
+    - {name: scrypted, switch: a, port: 1, shed_after_seconds: 1200}
+    - {name: frigate,  switch: a, port: 2, shed_after_seconds: 1200}
+    - {name: ha-test,  switch: b, port: 1, shed_after_seconds: 1200}
+    - {name: ha-prod,  switch: b, port: 3, shed_after_seconds: 2100}
+    - {name: pixie,    switch: b, port: 7, shed_after_seconds: 1200}
+    - {name: brush,    switch: b, port: 8, shed_after_seconds: 1200}

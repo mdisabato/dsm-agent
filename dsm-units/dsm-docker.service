@@ -1,0 +1,16 @@
+[Unit]
+Description=DSM Agent - Docker Monitor
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+ExecStart=/volume1/IoTdata/dsm-agent/venv/bin/python /volume1/IoTdata/dsm-agent/dsm-docker.py
+WorkingDirectory=/volume1/IoTdata/dsm-agent
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

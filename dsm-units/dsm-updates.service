@@ -1,0 +1,12 @@
+[Unit]
+Description=DSM Agent - Update Checker
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/volume1/IoTdata/dsm-agent/venv/bin/python /volume1/IoTdata/dsm-agent/dsm-updates.py
+WorkingDirectory=/volume1/IoTdata/dsm-agent
+
+[Install]
+WantedBy=multi-user.target
