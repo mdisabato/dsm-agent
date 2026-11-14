@@ -7,7 +7,7 @@ StartLimitBurst=3
 [Service]
 Type=simple
 User=root
-ExecStart=/volume1/IoTdata/dsm-agent/venv/bin/python /volume1/IoTdata/dsm-agent/dsm-agent.py
+ExecStart=/volume1/@appstore/python314/bin/python3.14 /volume1/IoTdata/dsm-agent/dsm-agent.py
 WorkingDirectory=/volume1/IoTdata/dsm-agent
 Restart=on-failure
 RestartSec=10
