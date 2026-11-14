@@ -419,7 +419,7 @@ def publish_metrics(
             "Published software_updates attributes for %d updates", len(attributes)
         )
     else:
-        publish(client, attributes_topic, "")
+        publish(client, attributes_topic, {"updates": []})
         logging.info("Cleared software_updates attributes")
 
 
