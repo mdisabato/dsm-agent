@@ -385,6 +385,7 @@ class Agent:
                 time.sleep(1)
 
         # Graceful shutdown
+        dsm_sensors.close(self)
         if self.ups_monitor:
             self.ups_monitor.stop()
             self.ups_monitor.join(timeout=5)
