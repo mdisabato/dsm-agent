@@ -272,8 +272,12 @@ def run_sudo_command(command: List[str], password: str) -> subprocess.CompletedP
     return result
 
 
-def check_package_updates(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Run synopkg checkupdateall and return list of available updates."""
+def check_package_updates(config: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+    """Run synopkg checkupdateall and return the list of available updates.
+
+    Returns [] when synopkg reports nothing to update, and None when the check
+    itself failed, so a failure is never published as "up to date".
+    """
     dsm = config["dsm"]
     try:
         result = run_sudo_command(
@@ -299,10 +303,10 @@ def check_package_updates(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     except json.JSONDecodeError as e:
         logging.error(f"Failed to parse synopkg output: {e}")
         logging.debug("Raw output: %s", output)
-        return []
+        return None
     except Exception as e:
         logging.error(f"synopkg checkupdateall failed: {e}")
-        return []
+        return None
 
 
 def fetch_package_detail(
@@ -331,28 +335,34 @@ def fetch_package_detail(
         return None
 
 
-def get_updates(config: Dict[str, Any], sid: str) -> Tuple[int, List[Dict[str, Any]]]:
-    """Return (count, details) of available package updates."""
+def get_updates(
+    config: Dict[str, Any], sid: str
+) -> Tuple[Optional[int], List[Dict[str, Any]], Optional[str]]:
+    """Return (count, details, error) of available package updates.
+
+    count is None (and error says why) when the check failed.
+    """
     raw_updates = check_package_updates(config)
+    if raw_updates is None:
+        return None, [], "synopkg update check failed"
     if not raw_updates:
         logging.info("No updates available.")
-        return 0, []
+        return 0, [], None
 
     details: List[Dict[str, Any]] = []
     for pkg in raw_updates:
         if not isinstance(pkg, dict) or "id" not in pkg:
             continue
-        info = fetch_package_detail(config, sid, pkg["id"])
-        if info:
-            details.append(
-                {
-                    "package_name": pkg.get("name", "unknown"),
-                    "installed_version": info.get("version", "unknown"),
-                    "latest_version": pkg.get("version", "unknown"),
-                }
-            )
+        info = fetch_package_detail(config, sid, pkg["id"]) or {}
+        details.append(
+            {
+                "package_name": pkg.get("name", "unknown"),
+                "installed_version": info.get("version", "unknown"),
+                "latest_version": pkg.get("version", "unknown"),
+            }
+        )
 
-    return len(details), details
+    return len(details), details, None
 
 
 def get_last_updated_time(config: Dict[str, Any]) -> str:
@@ -383,8 +393,9 @@ def get_last_updated_time(config: Dict[str, Any]) -> str:
 def publish_metrics(
     client: mqtt.Client,
     config: Dict[str, Any],
-    state: int,
+    state: Optional[int],
     attributes: List[Dict[str, Any]],
+    error: Optional[str] = None,
 ) -> None:
     """
     Publish metrics to MQTT:
@@ -393,6 +404,9 @@ def publish_metrics(
     - last_checked: timestamp
     - software_updates: state (count)
     - package_updates: state (count, separate sensor)
+
+    A failed check (state None) publishes null counts, which Home Assistant
+    shows as unknown, and the reason in the attributes.
     """
     mqtt_topic_prefix = config["mqtt"]["topic_prefix"]
     now = datetime.now(TIMEZONE)
@@ -413,7 +427,10 @@ def publish_metrics(
 
     # Attributes for software_updates
     attributes_topic = f"{mqtt_topic_prefix}/sensor/{HOSTNAME}/software_updates/attributes"
-    if state:
+    if error:
+        publish(client, attributes_topic, {"updates": [], "error": error})
+        logging.warning("Update check failed, published unknown: %s", error)
+    elif state:
         publish(client, attributes_topic, {"updates": attributes})
         logging.info(
             "Published software_updates attributes for %d updates", len(attributes)
@@ -438,10 +455,11 @@ def main() -> None:
         sid = login(config)
         if not sid:
             logging.error("Cannot check updates — DSM login failed")
+            publish_metrics(client, config, None, [], "DSM login failed")
             sys.exit(1)
 
-        state, attributes = get_updates(config, sid)
-        publish_metrics(client, config, state, attributes)
+        state, attributes, error = get_updates(config, sid)
+        publish_metrics(client, config, state, attributes, error)
 
     except Exception as e:
         logging.error("Fatal error: %s", e, exc_info=True)
