@@ -57,7 +57,7 @@ def publish_discovery(agent):
 
 
 def collect(agent):
-    """Collect DSM-specific sensor data. Values are 'active', 'idle' or 'unknown'."""
+    """Collect DSM-specific sensor data. Values are 'active', 'idle' or 'unknown' (Hyper Backup also 'checking')."""
     dsm_cfg = agent.config.get("dsm", {})
     limit = int(dsm_cfg.get("fail_limit", 3))
 
@@ -133,17 +133,26 @@ def _get_index_status(dsm_cfg: dict):
 
 
 def _get_backup_status(dsm_cfg: dict):
-    """'active' when any Hyper Backup task has a status other than 'none'.
+    """'active' while a backup runs, 'checking' while an integrity check runs, else 'idle'.
 
-    Idle tasks report state 'backupable' and status 'none'.
+    Idle tasks report state 'backupable' and status 'none'. A running backup sets
+    status to something other than 'none'. An integrity check leaves status at
+    'none' in the task list but sets state to 'error_detect' (the per-task status
+    call shows status 'detect' with stage 'detect_index' or 'detect_data').
+    A backup outranks a check when both are running.
     """
     data = _api(dsm_cfg, "SYNO.Backup.Task", "list")
     if data is None:
         return None
+    checking = False
     for task in data.get("task_list", []):
-        if (task.get("status") or "none").lower() != "none":
+        status = (task.get("status") or "none").lower()
+        state = (task.get("state") or "").lower()
+        if status not in ("none", "detect"):
             return "active"
-    return "idle"
+        if status == "detect" or state == "error_detect":
+            checking = True
+    return "checking" if checking else "idle"
 
 
 # ---------- DSM API helpers ----------
