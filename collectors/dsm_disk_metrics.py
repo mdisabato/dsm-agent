@@ -8,6 +8,11 @@ import psutil
 
 from synology_dsm import SynologyDSM
 
+# DSM USB statuses that still mean "plugged in and mounted". DSM reports
+# "usbbackup" while Hyper Backup holds the drive; reading that as
+# disconnected made every nightly backup look like the drives had dropped.
+CONNECTED_STATUSES = {"normal", "usbbackup"}
+
 
 # ---------- Discovery ----------
 
@@ -106,13 +111,15 @@ async def _fetch_usb_devices(config):
         for device_id, device_data in api.external_usb.get_devices.items():
             try:
                 data_dict = getattr(device_data, "_data", {})
+                status = data_dict.get("status", "normal")
 
                 device = {
                     "device_id":    device_id,
                     "device_name":  device_data.device_name,
                     "manufacturer": data_dict.get("producer", "Unknown"),
                     "model":        data_dict.get("product", "Generic USB Storage"),
-                    "is_mounted":   data_dict.get("status", "normal") == "normal",
+                    "status":       status,
+                    "is_mounted":   status in CONNECTED_STATUSES,
                     "partitions":   {},
                 }
 
@@ -127,8 +134,10 @@ async def _fetch_usb_devices(config):
                     used_bytes  += part_used
 
                     part_dict = getattr(part_data, "_data", {})
-                    if part_dict.get("status", "normal") != "normal":
+                    part_status = part_dict.get("status", "normal")
+                    if part_status not in CONNECTED_STATUSES:
                         device["is_mounted"] = False
+                        device["status"] = part_status
 
                     device["partitions"][part_id] = {
                         "share_name":       part_data.share_name,
@@ -192,6 +201,8 @@ def _publish_usb(agent, usb_devices):
             ("size",  "Size",  "{{ value_json.total_size_human }}", "harddisk-plus",           {}),
             ("used",  "Used",  "{{ value_json.used_size_human }}",  "harddisk-remove",         {}),
             ("free",  "Free",  "{{ value_json.free_size_human }}",  "harddisk-plus-outline",   {}),
+            # Raw DSM status: normal, usbbackup (Hyper Backup holds the drive), ...
+            ("status", "Status", "{{ value_json.status }}",         "usb-flash-drive",         {}),
         ]:
             disc_topic = f"{agent.discovery_prefix}/sensor/{unique_id}/{sensor_id}/config"
             payload = {
