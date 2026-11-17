@@ -1,0 +1,11 @@
+# Install into the agent's own folder (see README):
+#   python3.14 -m pip install --target /volume1/IoTdata/dsm-agent/pylib -r requirements.txt
+pyyaml
+paho-mqtt
+psutil
+docker
+pytz
+aiohttp
+py-synologydsm-api
+requests
+pysnmp>=7

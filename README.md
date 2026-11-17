@@ -20,8 +20,8 @@ Monitor for Synology DSM systems. Publishes MQTT messages with Home Assistant di
 
 - Install root: `/volume1/IoTdata/dsm-agent`. The units run Package Center's Python 3.14 as root.
 - `cp config.example.yaml config.yaml` and fill in every `<set-me>`. `config.yaml` is git-ignored; never commit it.
-- `pysnmp` (for `dsm_power`) goes in the agent's own folder, so DSM package updates can't remove it:
-  `python3.14 -m pip install --target /volume1/IoTdata/dsm-agent/pylib "pysnmp>=7"`
+- Every third-party package goes in the agent's own `pylib/` folder, so a DSM or Python package update can't remove it. Each script puts `pylib/` first on `sys.path` at startup:
+  `/volume1/@appstore/python314/bin/python3.14 -m pip install --target /volume1/IoTdata/dsm-agent/pylib -r requirements.txt`
 - Copy the units from `dsm-units/` to `/etc/systemd/system/`, then `sudo systemctl daemon-reload && sudo systemctl enable --now dsm-agent dsm-docker`.
 
 ## UPS shutdown and power return

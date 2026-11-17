@@ -6,6 +6,14 @@ info from the web and publishes to MQTT for HA discovery.
 Sensors are shared across all Pis — runs on homestone on a weekly schedule.
 """
 
+# Third-party packages live in <agent root>/pylib (pip install --target), outside
+# Synology's python314 package, so a DSM or Python package update can't remove them.
+# Falls back to the interpreter's own site-packages when pylib is absent.
+import os, sys
+_PYLIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pylib")
+if os.path.isdir(_PYLIB) and _PYLIB not in sys.path:
+    sys.path.insert(0, _PYLIB)
+
 import json
 import logging
 import os
