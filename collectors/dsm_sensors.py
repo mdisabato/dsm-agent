@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """DSM activity sensors: disk scrubbing, disk indexing and Hyper Backup.
 
+Hyper Backup has two sensors: what it is doing now (active, idle, checking),
+and how many tasks did not finish their last run (dsm_backup_failures), with
+each task's last result as attributes. Each task also gets its own sensor
+(dsm_backup_task_<name>) holding its last result, published when the task is
+first seen.
+
 Scrubbing comes from the kernel's md sync state (/sys/block/md*/md/sync_action),
 not from the process list: the md2_raid6 kernel thread uses CPU on every
 write, so CPU time there says nothing about a scrub.
@@ -26,6 +32,7 @@ _SESSION_ERRORS = {105, 106, 107, 119}
 _sid = None
 _last = {}   # key -> last good value
 _fails = {}  # key -> consecutive failed cycles
+_task_sensors = set()  # Hyper Backup task names whose sensor discovery is published
 
 
 # ---------- Discovery ----------
@@ -38,6 +45,7 @@ def publish_discovery(agent):
         ("dsm_scrubbing",    "Disk Scrubbing",    "{{ value_json.dsm_scrubbing }}",    "harddisk-plus"),
         ("dsm_indexing",     "Disk Indexing",      "{{ value_json.dsm_indexing }}",     "file-search"),
         ("dsm_hyper_backup", "Hyper Backup",       "{{ value_json.dsm_hyper_backup }}", "backup-restore"),
+        ("dsm_backup_failures", "Backup Failures", "{{ value_json.dsm_backup_failures }}", "backup-restore"),
     ]
 
     for key, name, value_template, icon in sensors:
@@ -50,6 +58,10 @@ def publish_discovery(agent):
             "device":         agent.sensor_device_info,
             "icon":           f"mdi:{icon}",
         }
+        if key == "dsm_backup_failures":
+            # per-task last result, e.g. {"backup_video": {"result": "suspend", "time": "..."}}
+            payload["json_attributes_topic"] = agent.state_topic
+            payload["json_attributes_template"] = "{{ value_json.dsm_backup_results | tojson }}"
         agent.mqtt.publish(topic, json.dumps(payload), qos=1, retain=True)
 
 
@@ -61,12 +73,20 @@ def collect(agent):
     dsm_cfg = agent.config.get("dsm", {})
     limit = int(dsm_cfg.get("fail_limit", 3))
 
+    results = _get_backup_results(dsm_cfg)
     readings = {
         "dsm_scrubbing":    _get_scrub_status(),
         "dsm_indexing":     _get_index_status(dsm_cfg),
         "dsm_hyper_backup": _get_backup_status(dsm_cfg),
+        "dsm_backup_failures": None if results is None else str(
+            sum(1 for r in results.values() if r["result"] not in BACKUP_RESULT_OK)),
     }
-    return {key: _debounce(key, value, limit) for key, value in readings.items()}
+    data = {key: _debounce(key, value, limit) for key, value in readings.items()}
+    if results is not None:
+        _last["dsm_backup_results"] = results
+        _publish_task_sensors(agent, results)
+    data["dsm_backup_results"] = _last.get("dsm_backup_results", {}) if data["dsm_backup_failures"] != "unknown" else {}
+    return data
 
 
 def close(agent):
@@ -99,6 +119,28 @@ def _debounce(key: str, value, limit: int) -> str:
     if _fails[key] >= limit or key not in _last:
         return "unknown"
     return _last[key]
+
+
+def _publish_task_sensors(agent, results: dict):
+    """One sensor per Hyper Backup task: its last result (done, suspend, ...)."""
+    for name in results:
+        if name in _task_sensors:
+            continue
+        safe = "".join(c if c.isalnum() else "_" for c in name.lower())
+        key = f"dsm_backup_task_{safe}"
+        payload = {
+            "name":           f"Backup task {name}",
+            "state_topic":    agent.state_topic,
+            "value_template": "{{ value_json.dsm_backup_results[%s].result | default('unknown') }}" % json.dumps(name),
+            "json_attributes_topic":    agent.state_topic,
+            "json_attributes_template": "{{ value_json.dsm_backup_results[%s] | default({}) | tojson }}" % json.dumps(name),
+            "unique_id":      f"{agent.device}_{key}",
+            "device":         agent.sensor_device_info,
+            "icon":           "mdi:backup-restore",
+        }
+        agent.mqtt.publish(f"{agent.discovery_prefix}/sensor/{agent.device}/{key}/config",
+                           json.dumps(payload), qos=1, retain=True)
+        _task_sensors.add(name)
 
 
 # ---------- Readers (each returns a value, or None on failure) ----------
@@ -155,6 +197,27 @@ def _get_backup_status(dsm_cfg: dict):
     return "checking" if checking else "idle"
 
 
+# A task's last_bkp_result: "done" is a finished run, "none" means it has never run.
+# Anything else ("suspend", "fail", "partial", "cancel", ...) is a run that did
+# not finish, e.g. "suspend" when the destination drive is full.
+BACKUP_RESULT_OK = {"done", "none", ""}
+
+
+def _get_backup_results(dsm_cfg: dict):
+    """{task name: {"result": last_bkp_result, "time": last_bkp_time}}, or None."""
+    data = _api(dsm_cfg, "SYNO.Backup.Task", "list",
+                params={"additional": json.dumps(["last_bkp_result", "last_bkp_time"])})
+    if data is None:
+        return None
+    return {
+        task.get("name", str(task.get("task_id"))): {
+            "result": (task.get("last_bkp_result") or "").lower(),
+            "time":   task.get("last_bkp_time") or "",
+        }
+        for task in data.get("task_list", [])
+    }
+
+
 # ---------- DSM API helpers ----------
 
 
@@ -188,7 +251,7 @@ def _login(dsm_cfg: dict):
         return None
 
 
-def _api(dsm_cfg: dict, api: str, method: str, version: str = "1"):
+def _api(dsm_cfg: dict, api: str, method: str, version: str = "1", params: dict = None):
     """Call a DSM API with the shared session. Returns the 'data' dict, or None.
 
     Logs in when there is no session, and logs in again (once) when DSM says
@@ -203,7 +266,7 @@ def _api(dsm_cfg: dict, api: str, method: str, version: str = "1"):
         try:
             response = requests.get(
                 f"{_base(dsm_cfg)}/entry.cgi",
-                params={"api": api, "version": version, "method": method, "_sid": _sid},
+                params={**(params or {}), "api": api, "version": version, "method": method, "_sid": _sid},
                 timeout=10,
             )
             body = response.json()
