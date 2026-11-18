@@ -8,9 +8,12 @@ import psutil
 
 from synology_dsm import SynologyDSM
 
+from collectors import dsm_sensors
+
 # DSM USB statuses that still mean "plugged in and mounted". DSM reports
-# "usbbackup" while Hyper Backup holds the drive; reading that as
-# disconnected made every nightly backup look like the drives had dropped.
+# "usbbackup" on every drive that is a Hyper Backup destination, whether or
+# not a backup is running; reading that as disconnected made every nightly
+# backup look like the drives had dropped.
 CONNECTED_STATUSES = {"normal", "usbbackup"}
 
 
@@ -80,11 +83,56 @@ def collect(agent):
     # --- USB metrics ---
     try:
         usb_devices = asyncio.run(_fetch_usb_devices(agent.config))
+        _mark_backup_in_use(usb_devices, _busy_backup_shares(agent.config.get("dsm", {})))
         _publish_usb(agent, usb_devices)
     except Exception as e:
         logging.error(f"USB device collection failed: {e}")
 
     return data
+
+
+def _busy_backup_shares(dsm_cfg: dict):
+    """Shares that a running (or integrity-checking) Hyper Backup task writes to.
+
+    Each task names its repository (repo_id); each repository names its share,
+    which is the USB drive's share name. Returns None when DSM can't be asked,
+    so the caller keeps DSM's raw status rather than guessing.
+    """
+    tasks = dsm_sensors._api(dsm_cfg, "SYNO.Backup.Task", "list")
+    repos = dsm_sensors._api(dsm_cfg, "SYNO.Backup.Repository", "list")
+    if tasks is None or repos is None:
+        return None
+    share_of = {r.get("repo_id"): r.get("share") for r in repos.get("repo_list", [])}
+    busy = set()
+    for task in tasks.get("task_list", []):
+        status = (task.get("status") or "none").lower()
+        state = (task.get("state") or "").lower()
+        share = share_of.get(task.get("repo_id"))
+        if status != "none" or state != "backupable":
+            # logged so the raw DSM values for running and queued tasks can be checked
+            logging.info(f"Hyper Backup task {task.get('name')!r} -> {share}: status={status} state={state}")
+        # Tasks due at the same time run one after another; DSM flags the queued
+        # ones' drives too, so a waiting task does not count as using its drive.
+        if (status not in ("none", "waiting") or state == "error_detect") and share:
+            busy.add(share)
+    return busy
+
+
+def _mark_backup_in_use(usb_devices: dict, busy):
+    """Keep 'usbbackup' only on the drive a backup is using right now.
+
+    DSM flags every Hyper Backup destination as 'usbbackup' all the time, so
+    without this the panel shows every backup drive in use while one job runs.
+    """
+    if busy is None:
+        return
+    for device in usb_devices.values():
+        device["dsm_status"] = device["status"]
+        if device["status"] != "usbbackup":
+            continue
+        shares = {p["share_name"] for p in device["partitions"].values()} | {device["device_name"]}
+        if not shares & busy:
+            device["status"] = "normal"
 
 
 # ---------- USB fetch (async) ----------
