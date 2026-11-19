@@ -199,8 +199,10 @@ def _get_backup_status(dsm_cfg: dict):
 
 # A task's last_bkp_result: "done" is a finished run, "none" means it has never run.
 # Anything else ("suspend", "fail", "partial", "cancel", ...) is a run that did
-# not finish, e.g. "suspend" when the destination drive is full.
-BACKUP_RESULT_OK = {"done", "none", ""}
+# not finish, e.g. "suspend" when the destination drive is full. While a task
+# runs, DSM reports the run in progress as its result ("backingup" during a
+# first full backup); that is not a failure either.
+BACKUP_RESULT_OK = {"done", "none", "", "backingup", "waiting", "preparing", "resuming"}
 
 
 def _get_backup_results(dsm_cfg: dict):
